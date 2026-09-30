@@ -1,0 +1,667 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover" />
+<meta name="theme-color" content="#000000" />
+<title>WIKIDREAMER</title>
+<meta name="description" content="WIKIDREAMER — an endless live dream browser powered by Wikidata, Wikimedia Commons and Babylon.js." />
+<meta name="application-name" content="WIKIDREAMER" />
+<meta name="color-scheme" content="dark" />
+<meta property="og:title" content="WIKIDREAMER" />
+<meta property="og:description" content="Explore an endless dream world generated from live Wikidata connections." />
+<meta property="og:type" content="website" />
+<meta property="og:url" content="https://wikidreamer.github.io/" />
+<meta name="twitter:card" content="summary" />
+<link rel="canonical" href="https://wikidreamer.github.io/" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='black'/%3E%3Ccircle cx='32' cy='32' r='9' fill='white'/%3E%3C/svg%3E" />
+<style>
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#000;color:#fff;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;touch-action:none}
+#c{width:100%;height:100%;display:block;outline:none;touch-action:none}
+#loading{position:fixed;inset:0;z-index:40;display:flex;align-items:center;justify-content:center;background:#000;transition:opacity .24s ease;pointer-events:none}
+#loading.off{opacity:0}
+#pulse{width:14px;height:14px;border-radius:50%;background:#fff;box-shadow:0 0 28px 8px rgba(255,255,255,.7);animation:p 1.05s ease-in-out infinite}
+@keyframes p{0%,100%{transform:scale(.5);opacity:.3}50%{transform:scale(1.25);opacity:1}}
+#label{white-space:pre-line;position:fixed;z-index:8;left:16px;top:max(14px,env(safe-area-inset-top));font-size:12px;letter-spacing:.13em;text-transform:uppercase;text-shadow:0 1px 7px #000;display:none;pointer-events:none}
+#modeBtns{position:fixed;z-index:14;right:12px;top:max(10px,env(safe-area-inset-top));display:flex;gap:7px}
+.modeBtn{width:44px;height:38px;border:1px solid rgba(255,255,255,.35);border-radius:18px;background:rgba(0,0,0,.28);color:#fff;font:700 16px/1 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px)}
+.modeBtn.on{background:rgba(255,255,255,.9);color:#000}
+#langBtn{font-size:10px;letter-spacing:.04em}
+#controls{position:fixed;inset:0;z-index:10;pointer-events:none}
+#joystick{display:none;pointer-events:auto;position:absolute;left:18px;bottom:calc(20px + env(safe-area-inset-bottom));width:118px;height:118px;border-radius:50%;border:1px solid rgba(255,255,255,.28);background:rgba(0,0,0,.22);box-shadow:inset 0 0 24px rgba(255,255,255,.05);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);touch-action:none}
+#joystick:after{content:"";position:absolute;left:50%;top:50%;width:6px;height:6px;margin:-3px;border-radius:50%;background:rgba(255,255,255,.28)}
+#joystickKnob{position:absolute;left:50%;top:50%;width:48px;height:48px;margin:-24px;border-radius:50%;border:1px solid rgba(255,255,255,.7);background:rgba(255,255,255,.16);box-shadow:0 0 18px rgba(255,255,255,.10);transform:translate(0px,0px);will-change:transform}
+@media (pointer:coarse),(max-width:900px){#joystick{display:block}}
+#search{position:fixed;inset:0;z-index:30;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.78);padding:22px}
+#search form{width:min(430px,100%);display:flex;gap:8px}
+#search input{flex:1;min-width:0;background:#050505;border:1px solid #555;color:#fff;padding:14px;font:inherit;font-size:16px;border-radius:3px}
+#search button{border:0;background:#fff;color:#000;padding:0 15px;border-radius:3px;font:inherit;font-weight:800}
+#search .x{background:#222;color:#fff;border:1px solid #555}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="loading"><div id="pulse"></div></div>
+<div id="label"></div>
+<div id="modeBtns"><button class="modeBtn" id="muteBtn" aria-label="Audio acceso" aria-pressed="false" title="Audio acceso">🔊</button><button class="modeBtn" id="langBtn" aria-label="Lingua" title="Cambia lingua">IT</button></div>
+<div id="controls"><div id="joystick" aria-label="Joystick movimento"><div id="joystickKnob"></div></div></div>
+<div id="search"><form id="searchForm"><input id="searchInput" autocomplete="off" autocapitalize="words" placeholder="…"><button type="submit">→</button><button type="button" class="x" id="searchClose">×</button></form></div>
+<script>
+/* WIKIDREAMER 1.0.1 — GitHub Pages release build */
+(() => {
+'use strict';
+const APP_NAME='WIKIDREAMER';
+const APP_VERSION='1.0.1';
+const WD='https://www.wikidata.org/w/api.php';
+const CM='https://commons.wikimedia.org/w/api.php';
+const MOBILE=/Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+const $=id=>document.getElementById(id);
+const canvas=$('c'), loading=$('loading'), labelEl=$('label'), searchEl=$('search'), searchInput=$('searchInput');
+const keys={f:false,b:false,l:false,r:false};
+const joystick={x:0,y:0,active:false,pid:null};
+let engine,scene,camera,envRoot,entityRoot,skyMesh,searchOrb;
+let currentEntity=null,currentWorld=null,transitioning=false,silentMode=false;
+const TTS_LANGS=[['it-IT','IT'],['en-US','EN']];
+let ttsLangIndex=0;
+let streamToken=0,voiceTimer=null,searchCooldown=0;
+let colliders=[],entities=[],animators=[],spawnSlots=[];
+let linkPool=[],linkPoolIds=new Set(),entityPopulateBusy=false;
+let groundHeight=(x,z)=>0;
+let audioCtx=null,audioMaster=null,audioNodes=[];
+const entityCache=new Map(), imageCache=new Map();
+const assetContainers=new Map();
+const ASSET_INDEX_URL='https://raw.githubusercontent.com/BabylonJS/Assets/master/structure.json';
+const ASSET_CDN_ROOT='https://assets.babylonjs.com/';
+let BABYLON_ENTITY_ASSETS=[];
+let assetIndexReady=false;
+let assetIndexPromise=null;
+const badAssetKeys=new Set();
+let infiniteChunks=new Map(), lastChunkKey='', worldFamily='natural', worldMats=null;
+const CHUNK_SIZE=260, CHUNK_RADIUS=1;
+
+const WLOG=(event,data={})=>console.log('[WIKIDREAMER]',event,data);
+const now=()=>performance.now();
+const rnd=(max=1,min=0)=>min+Math.random()*(max-min);
+const pick=a=>a[Math.floor(Math.random()*a.length)];
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+function showLoading(on){loading.classList.toggle('off',!on)}
+function currentTtsLang(){return TTS_LANGS[ttsLangIndex][0]}
+function currentLangKey(){return currentTtsLang().toLowerCase().startsWith('en')?'en':'it'}
+function entityLabel(ent=currentEntity){if(!ent)return'';const k=currentLangKey();return ent.labels?.[k]||ent.label||''}
+function entityDescription(ent=currentEntity){if(!ent)return'';const k=currentLangKey();return ent.descriptions?.[k]||ent.description||''}
+function updateLabel(){ const hasTTS='speechSynthesis' in window; const show=(silentMode||!hasTTS)&&currentEntity; labelEl.style.display=show?'block':'none'; if(!show){labelEl.textContent='';return;} const name=entityLabel(); const desc=entityDescription().replace(/\s+/g,' ').trim(); labelEl.textContent=desc ? name+'\n'+desc : name; }
+function setSilent(v){ silentMode=v; if(v && 'speechSynthesis' in window) speechSynthesis.cancel(); else if(!v&&currentEntity) speakLoop(entityLabel()); updateLabel(); const b=$('muteBtn'); if(b){b.classList.toggle('on',v);b.textContent=v?'🔇':'🔊';b.setAttribute('aria-pressed',String(v));b.setAttribute('aria-label',v?'Audio disattivato':'Audio acceso');b.title=v?'Audio disattivato':'Audio acceso';} WLOG('silent-mode',{silent:v}); }
+function cycleLanguage(){ttsLangIndex=(ttsLangIndex+1)%TTS_LANGS.length;$('langBtn').textContent=TTS_LANGS[ttsLangIndex][1];updateLabel();if(!silentMode&&currentEntity){if('speechSynthesis'in window)speechSynthesis.cancel();speakLoop(entityLabel())}WLOG('tts-language',{lang:currentTtsLang()})}
+
+// ---------- network ----------
+async function loadScript(src,timeout=6500){return new Promise((resolve,reject)=>{const s=document.createElement('script');const t=setTimeout(()=>{s.remove();reject(new Error('timeout'))},timeout);s.src=src;s.async=true;s.onload=()=>{clearTimeout(t);resolve()};s.onerror=()=>{clearTimeout(t);s.remove();reject(new Error('cdn'))};document.head.appendChild(s)})}
+async function ensureBabylon(){
+  if(!window.BABYLON){
+    for(const src of ['https://cdn.babylonjs.com/babylon.js','https://cdn.jsdelivr.net/npm/babylonjs@8.31.3/babylon.js','https://unpkg.com/babylonjs@8.31.3/babylon.js']){
+      try{await loadScript(src);if(window.BABYLON)break}catch(e){}
+    }
+  }
+  if(!window.BABYLON)throw new Error('Babylon.js unavailable');
+  if(!window.BABYLON.GLTFFileLoader){
+    for(const src of ['https://cdn.babylonjs.com/loaders/babylonjs.loaders.min.js','https://cdn.jsdelivr.net/npm/babylonjs-loaders@8.31.3/babylonjs.loaders.min.js','https://unpkg.com/babylonjs-loaders@8.31.3/babylonjs.loaders.min.js']){
+      try{await loadScript(src);if(window.BABYLON.GLTFFileLoader)break}catch(e){}
+    }
+  }
+  if(!window.BABYLON.GLTFFileLoader)WLOG('asset-loader-unavailable',{fallback:'prism'});
+  await initBabylonAssetLibrary();
+}
+const qs=o=>new URLSearchParams({...o,format:'json',origin:'*'}).toString();
+async function api(base,params,label='api',tries=3,timeout=9500){
+  const t0=now();let last;
+  for(let i=0;i<tries;i++){
+    const ctl=new AbortController();const timer=setTimeout(()=>ctl.abort(),timeout+i*1200);
+    try{
+      const res=await fetch(base+'?'+qs(params),{mode:'cors',signal:ctl.signal});
+      if(!res.ok)throw new Error('HTTP '+res.status);
+      const text=await res.text();clearTimeout(timer);
+      const ms=Math.round(now()-t0); if(ms>1800)WLOG('slow-fetch',{label,ms,bytes:text.length});
+      return JSON.parse(text);
+    }catch(e){clearTimeout(timer);last=e;if(i<tries-1)await sleep(350+i*500)}
+  }
+  WLOG('fetch-failed',{label,totalMs:Math.round(now()-t0),error:last?.message});throw last||new Error('fetch failed');
+}
+function labelOf(e){return e?.labels?.it?.value||e?.labels?.en?.value||e?.labels?.mul?.value||e?.id||'???'}
+function descOf(e){return e?.descriptions?.it?.value||e?.descriptions?.en?.value||''}
+function localizedFields(e){return {labels:{it:e?.labels?.it?.value||e?.labels?.en?.value||e?.labels?.mul?.value||e?.id||'???',en:e?.labels?.en?.value||e?.labels?.it?.value||e?.labels?.mul?.value||e?.id||'???'},descriptions:{it:e?.descriptions?.it?.value||e?.descriptions?.en?.value||'',en:e?.descriptions?.en?.value||e?.descriptions?.it?.value||''}}}
+function imageName(e){return e?.claims?.P18?.[0]?.mainsnak?.datavalue?.value||null}
+
+function hasUsefulLabel(e){
+  const lf=localizedFields(e);
+  const vals=[lf.labels.it,lf.labels.en].filter(Boolean);
+  return vals.some(v=>!/^Q\d+$/i.test(String(v).trim()));
+}
+function linkedQids(e){const out=[],seen=new Set();for(const cs of Object.values(e?.claims||{}))for(const st of cs||[]){const v=st?.mainsnak?.datavalue?.value;if(v&&typeof v==='object'&&v['entity-type']==='item'&&v.id&&!seen.has(v.id)){seen.add(v.id);out.push(v.id)}}return out}
+async function getEntities(ids){
+  const out={};
+  for(let i=0;i<ids.length;i+=6){const chunk=ids.slice(i,i+6);try{const d=await api(WD,{action:'wbgetentities',ids:chunk.join('|'),props:'labels|descriptions|claims',languages:'it|en|mul'},'wikidata:wbgetentities');Object.assign(out,d.entities||{})}catch(e){if(chunk.length>1){for(const id of chunk){try{const d=await api(WD,{action:'wbgetentities',ids:id,props:'labels|descriptions|claims',languages:'it|en|mul'},'wikidata:item',2,7000);Object.assign(out,d.entities||{})}catch(_){WLOG('wikidata-item-skipped',{id})}}}}}
+  return out;
+}
+async function commonsUrls(files,width=900){const map=new Map();const u=[...new Set(files.filter(Boolean))];for(let i=0;i<u.length;i+=18){const c=u.slice(i,i+18);const d=await api(CM,{action:'query',titles:c.map(x=>'File:'+x).join('|'),prop:'imageinfo',iiprop:'url',iiurlwidth:width},'commons:imageinfo');for(const p of Object.values(d.query?.pages||{})){const fn=(p.title||'').replace(/^File:/,'');const inf=p.imageinfo?.[0];if(inf)map.set(fn,inf.thumburl||inf.url)}}return map}
+async function randomBaseEntity(){for(let a=0;a<7;a++){const d=await api(WD,{action:'query',list:'random',rnnamespace:0,rnlimit:10},'wikidata:random');const ids=(d.query?.random||[]).map(x=>x.title).filter(x=>/^Q\d+$/.test(x));const es=await getEntities(ids);const hits=ids.map(id=>es[id]).filter(e=>e&&imageName(e)&&hasUsefulLabel(e));if(!hits.length)continue;const e=pick(hits);const urls=await commonsUrls([imageName(e)],1100);const image=urls.get(imageName(e));if(image){const lf=localizedFields(e);return {qid:e.id,label:lf.labels.it,description:lf.descriptions.it,labels:lf.labels,descriptions:lf.descriptions,image}}}
+ throw new Error('no random entity')}
+async function searchBaseEntity(term){const s=await api(WD,{action:'wbsearchentities',search:term,language:'it',uselang:'it',type:'item',limit:10},'wikidata:search');const ids=(s.search||[]).map(x=>x.id);const es=await getEntities(ids);const e=ids.map(id=>es[id]).find(x=>x&&imageName(x)&&hasUsefulLabel(x));if(!e)throw new Error('no image');const urls=await commonsUrls([imageName(e)],1100);const image=urls.get(imageName(e));if(!image)throw new Error('no image');const lf=localizedFields(e);return {qid:e.id,label:lf.labels.it,description:lf.descriptions.it,labels:lf.labels,descriptions:lf.descriptions,image}}
+
+// ---------- image pipeline ----------
+function sourceImage(url){if(imageCache.has(url))return imageCache.get(url);const p=new Promise((resolve,reject)=>{const im=new Image();im.crossOrigin='anonymous';im.decoding='async';im.onload=()=>resolve(im);im.onerror=reject;im.src=url});imageCache.set(url,p);return p}
+function cover(ctx,img,w,h,rot=0,scale=1){const ir=img.width/img.height,tr=w/h;let dw,dh;if(ir>tr){dh=h*scale;dw=dh*ir}else{dw=w*scale;dh=dw/ir}ctx.save();ctx.translate(w/2,h/2);ctx.rotate(rot);ctx.drawImage(img,-dw/2,-dh/2,dw,dh);ctx.restore()}
+function cleanTexture(name,url,size=MOBILE?384:512){const dt=new BABYLON.DynamicTexture(name,{width:size,height:size},scene,true,BABYLON.Texture.TRILINEAR_SAMPLINGMODE);const c=dt.getContext();c.fillStyle='#111';c.fillRect(0,0,size,size);dt.update(false);sourceImage(url).then(im=>{c.clearRect(0,0,size,size);cover(c,im,size,size,0,1.02);dt.update(false)}).catch(()=>{});return dt}
+function distortedTexture(name,url,size=MOBILE?192:256){const dt=new BABYLON.DynamicTexture(name,{width:size,height:size},scene,true,BABYLON.Texture.BILINEAR_SAMPLINGMODE);const c=dt.getContext();c.fillStyle='#222';c.fillRect(0,0,size,size);dt.update(false);sourceImage(url).then(im=>{const tmp=document.createElement('canvas');tmp.width=tmp.height=size;const tc=tmp.getContext('2d',{willReadFrequently:true});tc.fillStyle='#000';tc.fillRect(0,0,size,size);cover(tc,im,size,size,rnd(Math.PI*2),1.05+rnd(.7));const src=tc.getImageData(0,0,size,size),out=c.createImageData(size,size),s=src.data,d=out.data;const levels=3+Math.floor(rnd(5)),sat=.5+rnd(2.3),shift=2+Math.floor(rnd(8)),invert=Math.random()>.5;for(let y=0;y<size;y++)for(let x=0;x<size;x++){const i=(y*size+x)*4;const xr=Math.min(size-1,Math.max(0,x+shift)),xb=Math.min(size-1,Math.max(0,x-shift));let r=s[(y*size+xr)*4],g=s[i+1],b=s[(y*size+xb)*4+2];const gray=(r+g+b)/3;r=gray+(r-gray)*sat;g=gray+(g-gray)*sat;b=gray+(b-gray)*sat;const q=255/(levels-1);r=Math.round(r/q)*q;g=Math.round(g/q)*q;b=Math.round(b/q)*q;if(invert&&Math.sin(x*.08+y*.04+rnd(4))>.72){r=255-r;b=255-b}d[i]=r;d[i+1]=g;d[i+2]=b;d[i+3]=255}c.putImageData(out,0,0);dt.update(false)}).catch(()=>{});dt.wrapU=dt.wrapV=BABYLON.Texture.WRAP_ADDRESSMODE;dt.uScale=1+rnd(3);dt.vScale=1+rnd(3);return dt}
+function matColor(name,color,em=.05){const m=new BABYLON.StandardMaterial(name,scene);m.diffuseColor=color;m.emissiveColor=color.scale(em);m.specularColor=BABYLON.Color3.Black();return m}
+function matSurface(name,url,tint,em=.08){const m=new BABYLON.StandardMaterial(name,scene);const t=distortedTexture(name+'_t',url);m.diffuseTexture=t;m.emissiveTexture=t;m.diffuseColor=tint;m.emissiveColor=tint.scale(em);m.ambientColor=tint.scale(.22);m.specularColor=BABYLON.Color3.Black();return m}
+function matDist(name,url,em=.25){const m=new BABYLON.StandardMaterial(name,scene);const t=distortedTexture(name+'_t',url);m.diffuseTexture=t;m.emissiveTexture=t;m.emissiveColor=new BABYLON.Color3(em,em,em);m.specularColor=BABYLON.Color3.Black();return m}
+function matClean(name,url,em=1){const m=new BABYLON.StandardMaterial(name,scene);const t=cleanTexture(name+'_t',url);m.diffuseTexture=t;m.emissiveTexture=t;m.emissiveColor=new BABYLON.Color3(em,em,em);m.diffuseColor=new BABYLON.Color3(1,1,1);m.specularColor=BABYLON.Color3.Black();m.disableLighting=true;return m}
+
+// ---------- engine ----------
+function init3d(){
+  engine=new BABYLON.Engine(canvas,true,{preserveDrawingBuffer:false,stencil:false,adaptToDeviceRatio:true});engine.setHardwareScalingLevel(MOBILE?1.25:1);
+  scene=new BABYLON.Scene(engine);scene.clearColor=new BABYLON.Color4(0,0,0,1);scene.fogMode=BABYLON.Scene.FOGMODE_EXP2;scene.fogDensity=.008;scene.fogColor=new BABYLON.Color3(.06,.06,.07);
+  camera=new BABYLON.UniversalCamera('cam',new BABYLON.Vector3(0,1.72,0),scene);camera.fov=1.0;camera.minZ=.05;camera.maxZ=450;
+  const hemi=new BABYLON.HemisphericLight('hemi',new BABYLON.Vector3(.2,1,.1),scene);hemi.intensity=.78;
+  const sun=new BABYLON.DirectionalLight('sun',new BABYLON.Vector3(-.35,-1,.2),scene);sun.intensity=.34;
+  addInput();
+  let frames=0,last=now(),lastTexCheck=now();
+  engine.runRenderLoop(()=>{updateMovement();updateAnimators();updateInfiniteWorld();if(frames%180===0)ensureEntityPopulation('periodic');checkLinks();scene.render();frames++;const n=now();if(n-last>5000){WLOG('fps',{fps:Math.round(frames*1000/(n-last)),meshes:scene.meshes.length,materials:scene.materials.length,textures:scene.textures.length});frames=0;last=n}if(n-lastTexCheck>9000){const bad=scene.materials.filter(m=>m.diffuseTexture&&m.diffuseTexture.isReady&&!m.diffuseTexture.isReady()).map(m=>m.name).slice(0,12);if(bad.length)WLOG('texture-not-ready',{materials:bad});lastTexCheck=n}});
+  window.addEventListener('resize',()=>engine.resize());
+}
+function clearDream(){
+  streamToken++;if(voiceTimer)clearTimeout(voiceTimer);voiceTimer=null;stopMusic();if('speechSynthesis'in window)speechSynthesis.cancel();
+  colliders=[];entities=[];animators=[];spawnSlots=[];searchOrb=null;lastChunkKey='';
+  linkPool=[];linkPoolIds.clear();entityPopulateBusy=false;
+  for(const ch of infiniteChunks.values())try{ch.root.dispose(false,false)}catch(e){} infiniteChunks.clear();
+  if(envRoot)envRoot.dispose(false,true);if(entityRoot)entityRoot.dispose(false,true);if(skyMesh)skyMesh.dispose(false,true);
+  envRoot=new BABYLON.TransformNode('env',scene);entityRoot=new BABYLON.TransformNode('entities',scene)
+}
+
+// ---------- helpers / collision ----------
+function addRect(x,z,w,d,tag=null){colliders.push({t:'r',x,z,w,d,tag})}function addCircle(x,z,r,tag=null){colliders.push({t:'c',x,z,r,tag})}
+function blocked(x,z){for(const c of colliders){if(c.t==='r'&&Math.abs(x-c.x)<c.w*.5+.48&&Math.abs(z-c.z)<c.d*.5+.48)return true;if(c.t==='c'){const dx=x-c.x,dz=z-c.z;if(dx*dx+dz*dz<(c.r+.48)**2)return true}}return false}
+function box(name,x,y,z,w,h,d,mat,collide=true){const m=BABYLON.MeshBuilder.CreateBox(name,{width:w,height:h,depth:d},scene);m.position.set(x,y+h/2,z);m.material=mat;m.parent=envRoot;if(collide)addRect(x,z,w,d);return m}
+function cyl(name,x,y,z,diam,h,sides,mat,collide=true){const m=BABYLON.MeshBuilder.CreateCylinder(name,{diameter:diam,height:h,tessellation:sides},scene);m.position.set(x,y+h/2,z);m.material=mat;m.parent=envRoot;if(collide)addCircle(x,z,diam*.45);return m}
+function addSpawn(x,z,yaw=0,tag='core'){spawnSlots.push({x,z,yaw,used:false,tag})}
+function terrainMesh(name,size,sub,heightFn,mat){const m=BABYLON.MeshBuilder.CreateGround(name,{width:size,height:size,subdivisions:sub,updatable:true},scene);const p=m.getVerticesData(BABYLON.VertexBuffer.PositionKind);for(let i=0;i<p.length;i+=3)p[i+1]=heightFn(p[i],p[i+2]);m.updateVerticesData(BABYLON.VertexBuffer.PositionKind,p);BABYLON.VertexData.ComputeNormals(p,m.getIndices(),m.getVerticesData(BABYLON.VertexBuffer.NormalKind));m.refreshBoundingInfo();m.material=mat;m.parent=envRoot;return m}
+function groundY(x,z){return groundHeight?groundHeight(x,z):0}
+function addSky(url){skyMesh=BABYLON.MeshBuilder.CreateSphere('sky',{diameter:420,segments:20,sideOrientation:BABYLON.Mesh.BACKSIDE},scene);skyMesh.infiniteDistance=true;skyMesh.applyFog=false;skyMesh.isPickable=false;const m=matClean('skyMat',url,1);m.backFaceCulling=false;m.disableDepthWrite=true;skyMesh.material=m}
+function clearAt(x,z,r=3.5){
+  const pts=[[0,0],[r,0],[-r,0],[0,r],[0,-r],[r*.7,r*.7],[-r*.7,r*.7],[r*.7,-r*.7],[-r*.7,-r*.7]];
+  return pts.every(([dx,dz])=>!blocked(x+dx,z+dz));
+}
+function nearSearchOrb(x,z,r=10){
+  if(!searchOrb||searchOrb.isDisposed?.())return false;
+  const p=searchOrb.getAbsolutePosition(),dx=x-p.x,dz=z-p.z;
+  return dx*dx+dz*dz<r*r;
+}
+function nearLinkEntity(x,z,r=10){
+  for(const root of entities){
+    if(!root||root.isDisposed?.())continue;
+    const p=root.getAbsolutePosition(),dx=x-p.x,dz=z-p.z;
+    if(dx*dx+dz*dz<r*r)return true;
+  }
+  return false;
+}
+function walkableAt(x,z,r=3.5,maxDelta=2.4){
+  if(!clearAt(x,z,r))return false;
+  const c=groundY(x,z),pts=[[r,0],[-r,0],[0,r],[0,-r],[r*.7,r*.7],[-r*.7,r*.7],[r*.7,-r*.7],[-r*.7,-r*.7]];
+  return pts.every(([dx,dz])=>Math.abs(groundY(x+dx,z+dz)-c)<=maxDelta);
+}
+function nearestFreeSpawn(mode='entity'){
+  const utility=mode==='utility';
+  const minPlayerDist=utility?34:18;
+  const free=spawnSlots.filter(s=>{
+    if(s.used||!(utility?walkableAt(s.x,s.z,4.2,2.2):clearAt(s.x,s.z,3.2)))return false;
+    if(mode==='entity'&&nearSearchOrb(s.x,s.z,11))return false;
+    if(utility&&nearLinkEntity(s.x,s.z,11))return false;
+    if(camera){const dx=s.x-camera.position.x,dz=s.z-camera.position.z;if(dx*dx+dz*dz<minPlayerDist*minPlayerDist)return false}
+    return true;
+  });
+  if(!free.length)return null;
+  const preferred=free.filter(s=>{const dx=s.x-camera.position.x,dz=s.z-camera.position.z,dd=dx*dx+dz*dz;return dd>(utility?42:22)**2&&dd<(CHUNK_SIZE*1.15)**2});
+  const sp=pick(preferred.length?preferred:free);sp.used=true;return sp;
+}
+function emergencyOrbSpawn(){
+  if(!camera)return null;
+  for(let ring=0;ring<7;ring++)for(let i=0;i<36;i++){
+    const a=(i/36)*Math.PI*2+rnd(.12),r=38+ring*8,x=camera.position.x+Math.cos(a)*r,z=camera.position.z+Math.sin(a)*r;
+    if(walkableAt(x,z,4.2,2.2)&&!nearLinkEntity(x,z,11))return{x,z,yaw:0,used:true,tag:'utility-generated'};
+  }
+  return null;
+}
+function guaranteedPlayerSpawn(){
+  const candidates=spawnSlots.filter(s=>clearAt(s.x,s.z,5));
+  if(candidates.length){const sp=pick(candidates);sp.used=true;return sp}
+  for(let ring=0;ring<8;ring++)for(let i=0;i<48;i++){
+    const a=i/48*Math.PI*2,r=8+ring*7,x=Math.cos(a)*r,z=Math.sin(a)*r;if(clearAt(x,z,5))return{x,z,yaw:rnd(Math.PI*2),used:true};
+  }
+  WLOG('spawn-forced-origin',{});return{x:0,z:0,yaw:0,used:true};
+}
+
+// ---------- hand-authored dream templates ----------
+function buildNatural(e){
+  worldFamily='natural';currentWorld=pick(['NATURAL WORLD','FOREST VALLEY','HIGHLANDS']);scene.fogDensity=.006+rnd(.004);scene.fogColor=new BABYLON.Color3(.35+rnd(.14),.45+rnd(.18),.48+rnd(.16));
+  const env=matDist('natural_env',e.image,.22),rock=matSurface('rock',e.image,new BABYLON.Color3(.48,.50,.43),.05),trunk=matSurface('trunk',e.image,new BABYLON.Color3(.38,.24,.15),.04),water=matSurface('water',e.image,new BABYLON.Color3(.14,.36,.54),.22);worldMats={ground:env,main:trunk,secondary:rock,accent:water};
+  groundHeight=(x,z)=>{const base=Math.sin(x*.028)*1.8+Math.cos(z*.024)*1.5+Math.sin((x+z)*.013)*1.2;const mountain=18*Math.exp(-((x-88)**2+(z-72)**2)/2100);const valley=-3.0*Math.exp(-((x+32)**2)/4400);return base+mountain+valley};
+  terrainMesh('natural_ground',310,54,groundHeight,env);
+  // river valley through the west half
+  for(let z=-112;z<=112;z+=8){const y=groundY(-32,z)+.05;box('riverPanel',-32,y,z,17,.12,8.2,water,false)}
+  // bridge follows the terrain and has supports all the way down.
+  for(let i=-4;i<=4;i++){const x=-32+i*2.5,y=groundY(x,8)+.45;box('bridge',x,y,8,2.2,.45,18,rock,false);const gy=groundY(x,8);cyl('bridgeSupport',x,gy,8,.65,Math.max(.4,y-gy),6,rock,false)}
+  // tunnel mouths linking the physical landscape (not teleport links)
+  const tunnelMat=matDist('tunnelMat',e.image,.15);
+  box('tunnelN',0,groundY(0,-128),-128,28,12,6,tunnelMat,true);box('tunnelHoleN',0,groundY(0,-124)+1,-124,12,7,8,matSurface('tunnelDarkN',e.image,new BABYLON.Color3(.10,.10,.12),.04),false);
+  box('tunnelE',132,groundY(132,22),22,6,12,28,tunnelMat,true);box('tunnelHoleE',128,groundY(128,22)+1,22,8,7,12,matSurface('tunnelDarkE',e.image,new BABYLON.Color3(.10,.10,.12),.04),false);
+  // forest belts - leave central traversable lanes and clearings
+  function tree(x,z,s=1){const y=groundY(x,z);cyl('tree',x,y,z,1.0*s,4.5*s,5,trunk,true);const crown=BABYLON.MeshBuilder.CreatePolyhedron('crown',{type:1,size:2.4*s},scene);crown.position.set(x,y+5.4*s,z);crown.scaling.y=1.3;crown.material=env;crown.parent=envRoot}
+  for(let i=0;i<70;i++){let x=rnd(118,-118),z=rnd(108,-108);if(Math.abs(x+32)<16||Math.hypot(x,z)<22||Math.hypot(x-58,z+35)<20)continue;tree(x,z,.8+rnd(.55))}
+  // cliff line / savannah edge
+  for(let x=-110;x<=110;x+=16){if(x>-50&&x<-14)continue;box('cliff',x,groundY(x,92)-2,98,14,6,10,rock,true)}
+  // shipwreck suggestion
+  box('shipHull',62,groundY(62,-58),-58,20,3,6,env,true);const mast=cyl('mast',62,groundY(62,-58)+3,-58,1,13,6,rock,false);mast.rotation.z=.16;
+  // crystals / islands
+  for(let i=0;i<7;i++){const x=-78+i*7,z=48+Math.sin(i)*5,y=groundY(x,z);const c=BABYLON.MeshBuilder.CreatePolyhedron('crystal',{type:2,size:2+rnd(2)},scene);c.position.set(x,y+2,z);c.scaling.y=1.7+rnd(1.2);c.material=env;c.parent=envRoot;addCircle(x,z,1.6)}
+  // high mountain landmark
+  for(let i=0;i<7;i++){const a=i/7*Math.PI*2,r=10+i*1.8,x=88+Math.cos(a)*r,z=72+Math.sin(a)*r;cyl('peak',x,groundY(x,z),z,6+rnd(4),8+rnd(12),5,rock,true)}
+  // authored spawn landmarks
+  [[0,0],[-6,-55],[16,-95],[42,-34],[74,-58],[52,20],[78,46],[98,82],[38,88],[-12,74],[-58,60],[-92,32],[-96,-28],[-54,-76],[12,48],[34,6],[-8,106],[104,-12]].forEach(([x,z])=>addSpawn(x,z));
+}
+function buildSettlement(e){
+  worldFamily='settlement';const variant=pick(['OLD CITY','CIVIC QUARTER','WALLED TOWN']);currentWorld=variant;scene.fogDensity=.009+rnd(.005);scene.fogColor=new BABYLON.Color3(.20+rnd(.13),.20+rnd(.13),.22+rnd(.13));
+  const env=matDist('settlement_env',e.image,.23),plaster=matSurface('plaster',e.image,new BABYLON.Color3(.64,.57,.48),.06),wood=matSurface('wood',e.image,new BABYLON.Color3(.40,.25,.17),.05),roof=matSurface('roof',e.image,new BABYLON.Color3(.32,.27,.30),.08),stone=matSurface('stoneS',e.image,new BABYLON.Color3(.48,.48,.46),.04),accent=matSurface('accent',e.image,new BABYLON.Color3(.58,.28+rnd(.25),.20+rnd(.2)),.10);worldMats={ground:matSurface('settleChunkGround',e.image,new BABYLON.Color3(.56,.51,.44),.05),main:plaster,secondary:wood,accent:roof};
+  groundHeight=(x,z)=>Math.sin(x*.018)*.55+Math.cos(z*.023)*.45+Math.sin((x-z)*.008)*.3;
+  terrainMesh('settlement_ground',300,40,groundHeight,matSurface('settlement_ground_mat',e.image,new BABYLON.Color3(.56,.51,.44),.05));
+  // walled town with four broad entries
+  const L=132;
+  box('northWallL',-73,groundY(-73,-L),-L,118,7,3,plaster,true);box('northWallR',73,groundY(73,-L),-L,118,7,3,plaster,true);
+  box('southWallL',-73,groundY(-73,L),L,118,7,3,plaster,true);box('southWallR',73,groundY(73,L),L,118,7,3,plaster,true);
+  box('westWallT',-L,groundY(-L,-73),-73,3,7,118,plaster,true);box('westWallB',-L,groundY(-L,73),73,3,7,118,plaster,true);
+  box('eastWallT',L,groundY(L,-73),-73,3,7,118,plaster,true);box('eastWallB',L,groundY(L,73),73,3,7,118,plaster,true);
+  const blocks=[[-92,-88,52,46],[-32,-88,42,46],[36,-88,44,46],[96,-88,46,46],[-92,-28,52,42],[-34,-28,40,42],[40,-28,50,42],[98,-28,42,42],[-92,32,52,42],[-34,32,40,42],[42,32,48,42],[100,32,40,42],[-92,92,52,48],[-32,92,42,48],[42,92,48,48],[102,92,38,48]];
+  for(const [cx,cz,w,d] of blocks){
+    const y=groundY(cx,cz);box('courtN',cx,y,cz-d/2,w,4.8,2,plaster,true);box('courtS',cx,y,cz+d/2,w,4.8,2,plaster,true);box('courtW',cx-w/2,y,cz,2,4.8,d,plaster,true);if(Math.random()>.34)box('courtE',cx+w/2,y,cz,2,4.8,d*.62,plaster,true);
+    if(Math.random()>.16){const hh=5+rnd(5);box('house',cx,y,cz,Math.min(19,w*.58),hh,Math.min(17,d*.58),pick([wood,env]),true);const r=box('roof',cx,y+hh,cz,Math.min(23,w*.72),1.0,Math.min(20,d*.70),roof,false);r.rotation.z=rnd(.04,-.04)}
+  }
+  // generic arches along the main avenues
+  function arch(x,z,rot=0){const y=groundY(x,z);const root=new BABYLON.TransformNode('arch',scene);root.position.set(x,y,z);root.rotation.y=rot;root.parent=envRoot;for(const sx of [-3.2,3.2]){const p=BABYLON.MeshBuilder.CreateBox('ap',{width:1.0,height:6.5,depth:1.2},scene);p.position.set(sx,3.25,0);p.material=accent;p.parent=root}const b=BABYLON.MeshBuilder.CreateBox('ab',{width:7.5,height:1.0,depth:1.2},scene);b.position.y=6.0;b.material=accent;b.parent=root;addRect(x,z,7.5,1.1)}
+  [-112,-74,-36,0,36,74,112].forEach(z=>arch(0,z,0));arch(-118,0,Math.PI/2);arch(118,0,Math.PI/2);
+  // stepped civic tower / clockless bell tower
+  const px=84,pz=76,py=groundY(px,pz);for(let i=0;i<4;i++){const w=19-i*3.0;box('tower',px,py+i*4.3,pz,w,3.8,w,pick([wood,plaster]),i===0);box('towerCap',px,py+i*4.3+3.5,pz,w+3,.55,w+3,roof,false)}
+  // long public hall
+  const hy=groundY(-86,86);box('hall',-86,hy,86,36,8,25,pick([wood,plaster]),true);box('hallRoof',-86,hy+8,86,42,1.2,31,roof,false);
+  // abstract statue court
+  for(const [x,z] of [[55,10],[65,10],[75,10],[55,20],[65,20],[75,20]]){const y=groundY(x,z);const base=cyl('statue',x,y,z,2.3,3.8,4+Math.floor(rnd(4)),stone,true);const h=BABYLON.MeshBuilder.CreatePolyhedron('statueTop',{type:2+Math.floor(rnd(6)),size:1.2+rnd(.7)},scene);h.position.set(x,y+4.6,z);h.material=accent;h.parent=envRoot}
+  // variant-specific additions
+  if(variant==='CIVIC QUARTER'){for(const z of [-105,-65,-25,25,65,105]){box('arcadeL',-18,groundY(-18,z),z,2,5,14,plaster,true);box('arcadeR',18,groundY(18,z),z,2,5,14,plaster,true)}}
+  if(variant==='OLD CITY'){for(let i=0;i<12;i++){const x=rnd(112,-112),z=rnd(112,-112);if(Math.abs(x)<16||Math.abs(z)<16)continue;cyl('wellpost',x,groundY(x,z),z,1.4,4+rnd(3),5,accent,true)}}
+  if(variant==='WALLED TOWN'){for(const [x,z] of [[-105,-105],[105,-105],[-105,105],[105,105]])cyl('watchtower',x,groundY(x,z),z,12,18,8,plaster,true)}
+  [[0,-118],[0,-92],[0,-62],[0,-22],[0,22],[0,62],[0,102],[-118,0],[-82,0],[-42,0],[42,0],[82,0],[118,0],[-66,-58],[64,-58],[-66,58],[64,58],[86,76],[-86,86],[26,98],[-102,-102],[104,-104]].forEach(([x,z])=>addSpawn(x,z));
+}
+function buildViolence(e){
+  worldFamily='industrial';currentWorld=pick(['INDUSTRIAL DISTRICT','HARBOR CITY','NIGHT WAREHOUSES']);scene.fogDensity=.014+rnd(.006);scene.fogColor=new BABYLON.Color3(.025,.035,.075);
+  const env=matDist('violence_env',e.image,.18),concrete=matSurface('concrete',e.image,new BABYLON.Color3(.30,.32,.36),.04),metal=matSurface('metal',e.image,new BABYLON.Color3(.25,.28,.34),.05),dockMat=matSurface('dock',e.image,new BABYLON.Color3(.33,.25,.20),.04),water=matSurface('blackwater',e.image,new BABYLON.Color3(.08,.16,.30),.18);worldMats={ground:env,main:concrete,secondary:metal,accent:dockMat};
+  groundHeight=(x,z)=>Math.sin(x*.013)*.18+Math.cos(z*.017)*.16;
+  terrainMesh('violence_ground',320,28,groundHeight,matDist('violence_ground_mat',e.image,.10));
+  // coastal water east side
+  const sea=BABYLON.MeshBuilder.CreateGround('sea',{width:88,height:310},scene);sea.position.set(118,-.18,0);sea.material=water;sea.parent=envRoot;
+  // main avenue north-south: buildings line both sides
+  for(let z=-120;z<=120;z+=28){
+    for(const side of [-1,1]){const x=side*(32+rnd(10));const w=18+rnd(11),d=18+rnd(8),h=18+rnd(35);box('highrise',x,groundY(x,z),z,w,h,d,pick([env,concrete]),true)}
+  }
+  // secondary western streets / alley grid
+  for(let x=-122;x<=-55;x+=30)for(let z=-112;z<=112;z+=34){const w=16+rnd(9),d=18+rnd(10),h=10+rnd(22);box('block',x,groundY(x,z),z,w,h,d,pick([concrete,env]),true)}
+  // warehouses near docks
+  for(const [x,z,w,d] of [[72,-92,36,24],[72,-55,32,22],[74,-18,38,26],[74,28,34,22],[74,66,38,25],[72,105,34,24]]){box('warehouse',x,groundY(x,z),z,w,9+rnd(5),d,pick([metal,env]),true)}
+  // dock fingers
+  for(const z of [-92,-46,4,54,104]){box('dock',104,0,z,54,1.1,7,dockMat,false)}
+  // overpass across main district
+  for(let x=-100;x<=80;x+=18){box('overpass',x,9,-6,18,.9,7,concrete,false);if(x%36===0)cyl('pillar',x,groundY(x,-6),-6,2.8,9,8,concrete,true)}
+  // alley fences / dead ends
+  for(const [x,z,w,d] of [[-18,-74,3,20],[-18,72,3,22],[-63,-38,22,2],[-93,50,24,2],[24,48,3,18],[22,-45,3,16]])box('fence',x,groundY(x,z),z,w,5,d,metal,true);
+  // distant skyline outside navigable core
+  for(let i=0;i<24;i++){const a=rnd(Math.PI*2),r=148+rnd(32),x=Math.cos(a)*r,z=Math.sin(a)*r;box('skyline',x,0,z,12+rnd(18),25+rnd(55),12+rnd(18),concrete,false)}
+  [[0,-124],[0,-92],[0,-58],[0,-28],[0,20],[0,56],[0,94],[-28,-105],[-28,-48],[-30,40],[-35,106],[-75,-105],[-78,-55],[-90,10],[-78,72],[58,-110],[58,-72],[56,-35],[58,10],[58,48],[58,90],[96,-92],[96,4],[96,104]].forEach(([x,z])=>addSpawn(x,z));
+}
+
+function commonDreamSetup(family,name,e,fog,tint){worldFamily=family;currentWorld=name;scene.fogDensity=fog;scene.fogColor=tint;groundHeight=(x,z)=>Math.sin(x*.018)*.55+Math.cos(z*.021)*.52+Math.sin((x+z)*.009)*.34;const ground=matSurface(family+'_g',e.image,new BABYLON.Color3(.45+rnd(.18),.42+rnd(.18),.40+rnd(.18)),.06),main=matDist(family+'_m',e.image,.18),secondary=matSurface(family+'_s',e.image,new BABYLON.Color3(.38+rnd(.25),.38+rnd(.25),.38+rnd(.25)),.06),accent=matSurface(family+'_a',e.image,new BABYLON.Color3(.55+rnd(.3),.38+rnd(.3),.34+rnd(.3)),.10);worldMats={ground,main,secondary,accent};terrainMesh(family+'_ground',310,42,groundHeight,ground);return{ground,main,secondary,accent}}
+function seedSpawnGrid(){[[0,0],[0,-62],[0,62],[-62,0],[62,0],[-88,-88],[88,-88],[-88,88],[88,88],[-38,-94],[42,94],[-94,34],[94,-34],[44,-44],[-44,44]].forEach(([x,z])=>addSpawn(x,z))}
+function buildCemetery(e){const m=commonDreamSetup('cemetery',pick(['CEMETERY','MEMORIAL FIELDS','MAUSOLEUM PARK']),e,.012,new BABYLON.Color3(.16,.18,.20));for(let x=-110;x<=110;x+=14)for(let z=-105;z<=105;z+=13){if(Math.abs(x)<10||Math.abs(z)<10||Math.hypot(x,z)<22)continue;box('grave',x,groundY(x,z),z,2+rnd(.8),1.3+rnd(2.5),.65,pick([m.secondary,m.main]),true)}for(const [x,z] of [[-80,-68],[78,-70],[-76,72],[82,74]]){box('mausoleum',x,groundY(x,z),z,20,8,16,m.main,true);box('mausoleumRoof',x,groundY(x,z)+8,z,24,1,20,m.accent,false)}for(const z of [-98,-48,48,98]){cyl('obelisk',0,groundY(0,z),z,4,12,5,m.accent,true)}seedSpawnGrid()}
+function buildRuins(e){const m=commonDreamSetup('ruins',pick(['TEMPLE RUINS','STONE SANCTUARY','BROKEN COURTS']),e,.008,new BABYLON.Color3(.34,.31,.28));for(let a=0;a<Math.PI*2;a+=Math.PI/10){const x=Math.cos(a)*46,z=Math.sin(a)*46;cyl('column',x,groundY(x,z),z,3.2,9+rnd(5),8,m.main,true)}for(let i=0;i<18;i++){const x=rnd(110,-110),z=rnd(110,-110);if(Math.abs(x)<14&&Math.abs(z)<14)continue;box('ruinWall',x,groundY(x,z),z,4+rnd(18),3+rnd(7),2+rnd(4),pick([m.secondary,m.main]),true)}box('altar',0,groundY(0,0),0,18,4,14,m.accent,true);seedSpawnGrid()}
+function buildSuburb(e){const m=commonDreamSetup('suburb',pick(['SUBURBAN DREAM','QUIET BLOCKS','EMPTY NEIGHBORHOOD']),e,.007,new BABYLON.Color3(.32,.38,.40));for(let x=-102;x<=102;x+=34)for(let z=-102;z<=102;z+=34){if(Math.abs(x)<18||Math.abs(z)<18)continue;const h=5+rnd(3),w=14+rnd(7),d=12+rnd(6);box('house',x,groundY(x,z),z,w,h,d,m.main,true);box('roof',x,groundY(x,z)+h,z,w+3,.8,d+3,m.accent,false);box('garage',x+w*.55,groundY(x+w*.55,z),z,7,3.4,7,m.secondary,true)}for(const [x,z] of [[0,-95],[0,95],[-95,0],[95,0]])cyl('lamp',x,groundY(x,z),z,.8,7,8,m.accent,true);seedSpawnGrid()}
+function buildCoast(e){const m=commonDreamSetup('coast',pick(['COASTLINE','PIER DREAM','CLIFF SHORE']),e,.009,new BABYLON.Color3(.25,.38,.48));for(let z=-112;z<=112;z+=10){box('water',108,groundY(108,z)-.12,z,80,.12,10,m.accent,false)}for(let z=-80;z<=80;z+=8){const gy=groundY(48,z),deck=gy+.8;box('pier',72,deck,z,48,.45,7,m.secondary,false);for(const x of [50,70,92])cyl('pierSupport',x,groundY(x,z),z,.55,Math.max(.5,deck-groundY(x,z)),6,m.secondary,false)}cyl('lighthouse',-76,groundY(-76,72),72,9,24,10,m.main,true);for(let i=0;i<18;i++){const x=rnd(42,-115),z=rnd(112,-112);if(Math.abs(x)<12||Math.abs(z)<12)continue;cyl('rock',x,groundY(x,z),z,4+rnd(7),3+rnd(8),5,m.main,true)}seedSpawnGrid()}
+function buildDesert(e){const m=commonDreamSetup('desert',pick(['DESERT MONUMENTS','DRY BASIN','SALT DREAM']),e,.004,new BABYLON.Color3(.52,.40,.28));for(let i=0;i<26;i++){const x=rnd(116,-116),z=rnd(116,-116);if(Math.hypot(x,z)<20)continue;cyl('monolith',x,groundY(x,z),z,4+rnd(5),7+rnd(18),3+Math.floor(rnd(4)),pick([m.main,m.secondary]),true)}for(const [x,z] of [[0,-80],[70,-45],[-72,-38],[65,66],[-62,72]]){box('archL',x-5,groundY(x-5,z),z,2,9,3,m.accent,true);box('archR',x+5,groundY(x+5,z),z,2,9,3,m.accent,true);box('archTop',x,Math.max(groundY(x-5,z),groundY(x+5,z))+8,z,12,2,3,m.accent,false)}seedSpawnGrid()}
+function buildGarden(e){const m=commonDreamSetup('garden',pick(['GARDEN ESTATE','HEDGE COURTS','GLASS GARDEN']),e,.010,new BABYLON.Color3(.24,.38,.26));for(let x=-112;x<=112;x+=28){if(Math.abs(x)<12)continue;box('hedge',x,groundY(x,-54),-54,18,4,4,m.main,true);box('hedge',x,groundY(x,54),54,18,4,4,m.main,true)}for(let z=-108;z<=108;z+=30){if(Math.abs(z)<12)continue;box('hedge',-54,groundY(-54,z),z,4,4,20,m.main,true);box('hedge',54,groundY(54,z),z,4,4,20,m.main,true)}for(let i=0;i<20;i++){const a=i/20*Math.PI*2,x=Math.cos(a)*86,z=Math.sin(a)*86;cyl('tree',x,groundY(x,z),z,2,7+rnd(4),7,m.secondary,true)}box('estate',0,groundY(0,-96),-96,42,11,25,m.accent,true);seedSpawnGrid()}
+function buildSurreal(e){const m=commonDreamSetup('surreal',pick(['SURREAL PLAZA','COLOR BLOCKS','OPEN DREAM']),e,.006,new BABYLON.Color3(.40,.26,.46));for(let i=0;i<28;i++){const a=i/28*Math.PI*2,r=35+(i%4)*21,x=Math.cos(a)*r,z=Math.sin(a)*r;if(i%3===0)cyl('tower',x,groundY(x,z),z,5+rnd(7),8+rnd(25),3+Math.floor(rnd(7)),m.main,true);else box('block',x,groundY(x,z),z,5+rnd(10),5+rnd(20),5+rnd(10),pick([m.secondary,m.accent]),true)}for(const [x,z] of [[0,-70],[0,70],[-70,0],[70,0]]){const y=groundY(x,z);cyl('ringPost',x,y,z,3,12,8,m.accent,true)}seedSpawnGrid()}
+
+function removeInfiniteChunk(key){
+  const c=infiniteChunks.get(key);if(!c)return;
+  colliders=colliders.filter(x=>x.tag!==key);
+  spawnSlots=spawnSlots.filter(s=>s.tag!==key);
+  for(const root of [...entities])if(root.metadata?.spawnChunk===key)removeLinkRoot(root,'chunk-removed');
+  try{c.root.dispose(false,false)}catch(e){}
+  infiniteChunks.delete(key);WLOG('chunk-removed-safe',{key});
+}
+function chunkGround(root,cx,cz,key){const m=BABYLON.MeshBuilder.CreateGround('chunkGround',{width:CHUNK_SIZE+3,height:CHUNK_SIZE+3,subdivisions:12,updatable:true},scene);m.position.set(cx*CHUNK_SIZE,0,cz*CHUNK_SIZE);const pos=m.getVerticesData(BABYLON.VertexBuffer.PositionKind);for(let i=0;i<pos.length;i+=3){const gx=pos[i]+cx*CHUNK_SIZE,gz=pos[i+2]+cz*CHUNK_SIZE;pos[i+1]=groundY(gx,gz)}m.updateVerticesData(BABYLON.VertexBuffer.PositionKind,pos);BABYLON.VertexData.ComputeNormals(pos,m.getIndices(),m.getVerticesData(BABYLON.VertexBuffer.NormalKind));m.material=worldMats?.ground;m.parent=root;return m}
+function chunkBox(root,key,x,z,w,h,d,mat){const y=groundY(x,z);const m=BABYLON.MeshBuilder.CreateBox('repeat',{width:w,height:h,depth:d},scene);m.position.set(x,y+h/2,z);m.material=mat;m.parent=root;addRect(x,z,w,d,key);return m}
+function chunkCyl(root,key,x,z,diam,h,mat,sides=6){const y=groundY(x,z);const m=BABYLON.MeshBuilder.CreateCylinder('repeat',{diameter:diam,height:h,tessellation:sides},scene);m.position.set(x,y+h/2,z);m.material=mat;m.parent=root;addCircle(x,z,diam*.45,key);return m}
+function pseudo(seed){let n=seed>>>0;return()=>((n=(n*1664525+1013904223)>>>0)/4294967296)}
+function buildInfiniteChunk(cx,cz){const key=cx+','+cz;if(infiniteChunks.has(key))return;const root=new BABYLON.TransformNode('chunk_'+key,scene);root.parent=envRoot;chunkGround(root,cx,cz,key);const rr=pseudo(((cx*73856093)^(cz*19349663)^(worldFamily.length*83492791))>>>0);const ox=cx*CHUNK_SIZE,oz=cz*CHUNK_SIZE;const spots=[];for(let i=0;i<20;i++)spots.push([ox+(rr()-.5)*(CHUNK_SIZE-28),oz+(rr()-.5)*(CHUNK_SIZE-28)]);for(const [x,z] of spots){if(!clearAt(x,z,4))continue;
+    if(worldFamily==='natural'){if(rr()>.25)chunkCyl(root,key,x,z,1.2,5+rr()*5,worldMats.main,5);else chunkCyl(root,key,x,z,5+rr()*8,4+rr()*9,worldMats.secondary,5)}
+    else if(worldFamily==='settlement'||worldFamily==='suburb'){chunkBox(root,key,x,z,14+rr()*14,7+rr()*16,12+rr()*14,rr()>.5?worldMats.main:worldMats.secondary)}
+    else if(worldFamily==='industrial'){chunkBox(root,key,x,z,14+rr()*18,12+rr()*28,12+rr()*17,rr()>.5?worldMats.main:worldMats.secondary)}
+    else if(worldFamily==='cemetery'){rr()>.2?chunkBox(root,key,x,z,2.2,1.5+rr()*3,.7,worldMats.secondary):chunkBox(root,key,x,z,16,7,13,worldMats.main)}
+    else if(worldFamily==='ruins'){rr()>.4?chunkCyl(root,key,x,z,3,7+rr()*8,worldMats.main,8):chunkBox(root,key,x,z,4+rr()*14,3+rr()*7,2+rr()*5,worldMats.secondary)}
+    else if(worldFamily==='coast'){chunkCyl(root,key,x,z,4+rr()*8,3+rr()*9,worldMats.main,5)}
+    else if(worldFamily==='desert'){chunkCyl(root,key,x,z,4+rr()*5,8+rr()*20,worldMats.main,3+Math.floor(rr()*4))}
+    else if(worldFamily==='garden'){chunkBox(root,key,x,z,3+rr()*15,4,3+rr()*15,worldMats.main)}
+    else {rr()>.5?chunkCyl(root,key,x,z,5+rr()*8,8+rr()*22,worldMats.main,3+Math.floor(rr()*6)):chunkBox(root,key,x,z,7+rr()*12,7+rr()*22,7+rr()*12,worldMats.secondary)}
+  }
+  // Every streamed chunk contributes fresh link slots so exploration never runs out of exits.
+  let added=0;for(let i=0;i<24&&added<7;i++){const sx=ox+(rr()-.5)*(CHUNK_SIZE-44),sz=oz+(rr()-.5)*(CHUNK_SIZE-44);if(clearAt(sx,sz,4.2)){addSpawn(sx,sz,rr()*Math.PI*2,key);added++}}
+  infiniteChunks.set(key,{root,cx,cz});WLOG('chunk-built',{key,family:worldFamily,linkSlots:added})}
+function updateInfiniteWorld(force=false){
+  if(!camera||!envRoot||!worldMats)return;
+  const cx=Math.floor((camera.position.x+CHUNK_SIZE/2)/CHUNK_SIZE),cz=Math.floor((camera.position.z+CHUNK_SIZE/2)/CHUNK_SIZE),ck=cx+','+cz;
+  if(!force&&ck===lastChunkKey)return;
+  lastChunkKey=ck;
+  const wanted=new Set();
+  for(let dz=-CHUNK_RADIUS;dz<=CHUNK_RADIUS;dz++)for(let dx=-CHUNK_RADIUS;dx<=CHUNK_RADIUS;dx++){const x=cx+dx,z=cz+dz,key=x+','+z;wanted.add(key);if(x===0&&z===0)continue;buildInfiniteChunk(x,z)}
+  for(const key of [...infiniteChunks.keys()])if(!wanted.has(key))removeInfiniteChunk(key);
+  pruneFarLinkEntities();
+  maintainSearchOrb();
+  ensureEntityPopulation('chunk-change');
+}
+
+const WORLD_BUILDERS=[buildNatural,buildSettlement,buildViolence,buildCemetery,buildRuins,buildSuburb,buildCoast,buildDesert,buildGarden,buildSurreal];
+
+function buildDream(e){
+  const t0=now();clearDream();currentEntity=e;updateLabel();addSky(e.image);
+  const builder=pick(WORLD_BUILDERS);builder(e);
+  // Establish the player spawn first; the search orb must always be placed relative to it.
+  const start=guaranteedPlayerSpawn();camera.position.set(start.x,groundY(start.x,start.z)+1.72,start.z);camera.rotation.set(0,start.yaw||rnd(Math.PI*2),0);
+  addSearchOrb();
+  updateInfiniteWorld(true);
+  startAudioForWorld();
+  const token=++streamToken;streamEntities(e,token);
+  WLOG('room-built-immediate',{world:currentWorld,qid:e.qid,ms:Math.round(now()-t0),spawnSlots:spawnSlots.length});
+}
+
+// ---------- streaming Wikidata entities ----------
+async function streamEntities(base,token){
+  const t0=now();WLOG('entity-stream-start',{qid:base.qid,world:currentWorld});
+  try{
+    let full=entityCache.get(base.qid);if(!full){const es=await getEntities([base.qid]);full=es[base.qid];if(full)entityCache.set(base.qid,full)}
+    if(!full||token!==streamToken)return;
+    const qids=linkedQids(full).sort(()=>Math.random()-.5).slice(0,132);
+    let discovered=0;
+    for(let i=0;i<qids.length&&token===streamToken;i+=6){
+      const batch=qids.slice(i,i+6),es=await getEntities(batch);if(token!==streamToken)return;
+      const candidates=batch.map(id=>es[id]).filter(x=>x&&imageName(x)&&hasUsefulLabel(x));if(!candidates.length)continue;
+      const urls=await commonsUrls(candidates.map(imageName),720);if(token!==streamToken)return;
+      for(const ent of candidates){
+        if(token!==streamToken)break;
+        const image=urls.get(imageName(ent));if(!image)continue;
+        const lf=localizedFields(ent);if(/^Q\d+$/i.test(String(lf.labels.it||'').trim())&&/^Q\d+$/i.test(String(lf.labels.en||'').trim())){WLOG('entity-skipped-qid-label',{qid:ent.id});continue;}const info={qid:ent.id,label:lf.labels.it,description:lf.descriptions.it,labels:lf.labels,descriptions:lf.descriptions,image};
+        entityCache.set(ent.id,ent);
+        if(!linkPoolIds.has(info.qid)){linkPoolIds.add(info.qid);linkPool.push(info);discovered++;WLOG('entity-pool-add',{qid:info.qid,pool:linkPool.length})}
+        await sleep(240+rnd(520));
+        ensureEntityPopulation('stream');
+      }
+    }
+    if(!linkPool.length&&token===streamToken){
+      try{const fallback=await randomBaseEntity();if(fallback&&fallback.qid!==base.qid){linkPoolIds.add(fallback.qid);linkPool.push(fallback);WLOG('entity-pool-fallback',{qid:fallback.qid});ensureEntityPopulation('fallback')}}catch(e){WLOG('entity-pool-fallback-error',{error:e.message})}
+    }
+    WLOG('entity-stream-complete',{qid:base.qid,discovered,pool:linkPool.length,ms:Math.round(now()-t0)});
+  }catch(err){WLOG('entity-stream-error',{qid:base.qid,error:err.message,ms:Math.round(now()-t0)})}
+}
+async function initBabylonAssetLibrary(){
+  if(assetIndexReady)return BABYLON_ENTITY_ASSETS;
+  if(assetIndexPromise)return assetIndexPromise;
+  assetIndexPromise=(async()=>{
+    const t0=now();
+    try{
+      const ctl=new AbortController();
+      const timer=setTimeout(()=>ctl.abort(),12000);
+      const res=await fetch(ASSET_INDEX_URL,{mode:'cors',cache:'force-cache',signal:ctl.signal});
+      if(!res.ok)throw new Error('HTTP '+res.status);
+      const data=await res.json();clearTimeout(timer);
+      const supported=new Set(['.glb','.gltf','.babylon','.obj','.stl']);
+      const raw=Array.isArray(data.meshes)?data.meshes:[];
+      const seen=new Set();
+      BABYLON_ENTITY_ASSETS=raw.filter(a=>{
+        const file=String(a.filename||'');
+        const ext=file.slice(file.lastIndexOf('.')).toLowerCase();
+        if(!supported.has(ext))return false;
+        const key=String(a.path||((a.rootUrl||'')+'/'+file));
+        if(seen.has(key))return false;seen.add(key);return true;
+      }).map((a,i)=>({
+        name:a.name||('mesh_'+i),
+        root:ASSET_CDN_ROOT+String(a.rootUrl||'meshes').replace(/^\/+|\/+$/g,'')+'/',
+        file:a.filename,
+        path:a.path||'',
+        height:4.2+rnd(1.8)
+      }));
+      assetIndexReady=true;
+      WLOG('asset-index-ready',{count:BABYLON_ENTITY_ASSETS.length,ms:Math.round(now()-t0),source:'BabylonJS/Assets structure.json'});
+      return BABYLON_ENTITY_ASSETS;
+    }catch(err){
+      WLOG('asset-index-failed',{error:err.message});
+      // Small official fallback list only if the live index itself is unreachable.
+      BABYLON_ENTITY_ASSETS=[
+        {name:'heart',root:'https://assets.babylonjs.com/meshes/',file:'emoji_heart.glb',height:4.4},
+        {name:'boombox',root:'https://assets.babylonjs.com/meshes/',file:'boombox.glb',height:4.4},
+        {name:'car',root:'https://assets.babylonjs.com/meshes/',file:'car.glb',height:4.8},
+        {name:'ufo',root:'https://assets.babylonjs.com/meshes/',file:'ufo.glb',height:4.8},
+        {name:'target',root:'https://assets.babylonjs.com/meshes/',file:'target.glb',height:4.5},
+        {name:'waterBottle',root:'https://assets.babylonjs.com/meshes/waterBottle/',file:'WaterBottle.gltf',height:4.4},
+        {name:'teapots',root:'https://assets.babylonjs.com/meshes/TeapotsGalore/',file:'TeapotsGalore.gltf',height:4.6},
+        {name:'stanfordBunny',root:'https://assets.babylonjs.com/meshes/',file:'StanfordBunny.obj',height:4.6}
+      ];
+      assetIndexReady=true;
+      return BABYLON_ENTITY_ASSETS;
+    }
+  })();
+  return assetIndexPromise;
+}
+async function getAssetContainer(def){
+  const key=def.root+def.file;
+  if(badAssetKeys.has(key))throw new Error('asset previously failed');
+  if(assetContainers.has(key))return assetContainers.get(key);
+  if(!BABYLON.SceneLoader?.LoadAssetContainerAsync)throw new Error('asset loader unavailable');
+  const t0=now();
+  try{
+    const load=BABYLON.SceneLoader.LoadAssetContainerAsync(def.root,def.file,scene);
+    const timeout=new Promise((_,reject)=>setTimeout(()=>reject(new Error('asset timeout')),15000));
+    const c=await Promise.race([load,timeout]);
+    c.removeAllFromScene();assetContainers.set(key,c);
+    WLOG('asset-loaded',{asset:def.name,file:def.file,ms:Math.round(now()-t0)});return c;
+  }catch(err){badAssetKeys.add(key);throw err}
+}
+function fallbackEntityShape(root,mat){
+  const h=4.4+rnd(2.8);const m=BABYLON.MeshBuilder.CreateCylinder('fallbackEntity',{diameterTop:1.4+rnd(1.8),diameterBottom:2.3+rnd(2),height:h,tessellation:3+Math.floor(rnd(7))},scene);m.position.y=h/2;m.material=mat;m.parent=root;return 'fallback-prism';
+}
+function normalizeAssetRoot(assetRoot,targetHeight=5){
+  const meshes=assetRoot.getChildMeshes(false).filter(m=>m.getTotalVertices?.()>0);
+  if(!meshes.length)return;
+  assetRoot.computeWorldMatrix(true);meshes.forEach(m=>m.computeWorldMatrix(true));
+  let minY=Infinity,maxY=-Infinity,minX=Infinity,maxX=-Infinity,minZ=Infinity,maxZ=-Infinity;
+  for(const m of meshes){const bb=m.getBoundingInfo().boundingBox;const mn=bb.minimumWorld,mx=bb.maximumWorld;minY=Math.min(minY,mn.y);maxY=Math.max(maxY,mx.y);minX=Math.min(minX,mn.x);maxX=Math.max(maxX,mx.x);minZ=Math.min(minZ,mn.z);maxZ=Math.max(maxZ,mx.z)}
+  const h=Math.max(.001,maxY-minY),scale=targetHeight/h;assetRoot.scaling.scaleInPlace(scale);assetRoot.computeWorldMatrix(true);
+  meshes.forEach(m=>m.computeWorldMatrix(true));minY=Infinity;
+  for(const m of meshes)minY=Math.min(minY,m.getBoundingInfo().boundingBox.minimumWorld.y);
+  if(Number.isFinite(minY))assetRoot.position.y-=minY;
+}
+async function buildAssetEntity(root,info,mat){
+  await initBabylonAssetLibrary();
+  if(!BABYLON_ENTITY_ASSETS.length)return fallbackEntityShape(root,mat);
+  const available=BABYLON_ENTITY_ASSETS.filter(def=>!badAssetKeys.has(def.root+def.file));
+  const order=[...available].sort(()=>Math.random()-.5);
+  const tries=Math.min(10,order.length);
+  for(const def of order.slice(0,tries)){
+    try{
+      const c=await getAssetContainer(def);
+      const entries=c.instantiateModelsToScene(n=>'wd_'+info.qid+'_'+n,true,{doNotInstantiate:true});
+      const assetRoot=new BABYLON.TransformNode('asset_'+def.name,scene);
+      for(const n of entries.rootNodes){n.parent=assetRoot}
+      for(const m of assetRoot.getChildMeshes(false)){m.material=mat;m.isPickable=false}
+      normalizeAssetRoot(assetRoot,(4.0+rnd(2.2))*(.9+rnd(.24)));assetRoot.parent=root;
+      root.metadata.asset=def.name;root.metadata.assetFile=def.file;
+      return def.name;
+    }catch(err){WLOG('asset-load-failed',{asset:def.name,file:def.file,error:err.message})}
+  }
+  return fallbackEntityShape(root,mat);
+}
+function removeLinkRoot(root,reason='far'){
+  if(!root||root.isDisposed?.())return;
+  const slot=root.metadata?.spawnSlot;if(slot)slot.used=false;
+  entities=entities.filter(x=>x!==root);
+  animators=animators.filter(a=>a.root!==root);
+  const mat=root.metadata?.entityMat;
+  try{root.dispose(false,false)}catch(e){}
+  try{mat?.dispose?.(true,true)}catch(e){}
+  WLOG('entity-despawn',{qid:root.metadata?.qid,reason,active:entities.length});
+}
+function pruneFarLinkEntities(){
+  if(!camera)return;const maxD=CHUNK_SIZE*1.7,maxD2=maxD*maxD;
+  for(const root of [...entities]){const p=root.getAbsolutePosition(),dx=p.x-camera.position.x,dz=p.z-camera.position.z;if(dx*dx+dz*dz>maxD2)removeLinkRoot(root,'far')}
+}
+function maintainSearchOrb(){
+  if(!camera||!entityRoot)return;
+  if(searchOrb&&!searchOrb.isDisposed()){const p=searchOrb.getAbsolutePosition(),dx=p.x-camera.position.x,dz=p.z-camera.position.z;if(dx*dx+dz*dz<(CHUNK_SIZE*1.25)**2)return;const slot=searchOrb.metadata?.spawnSlot;if(slot)slot.used=false;animators=animators.filter(a=>a.root!==searchOrb);try{searchOrb.dispose(false,true)}catch(e){}searchOrb=null}
+  if(!searchOrb)addSearchOrb();
+}
+async function ensureEntityPopulation(reason='tick'){
+  if(entityPopulateBusy||transitioning||!linkPool.length||!camera)return;
+  const nearD=CHUNK_SIZE*1.35,nearD2=nearD*nearD;
+  const nearby=entities.filter(root=>{if(root.isDisposed())return false;const p=root.getAbsolutePosition(),dx=p.x-camera.position.x,dz=p.z-camera.position.z;return dx*dx+dz*dz<nearD2});
+  const target=MOBILE?7:10;
+  if(nearby.length>=target)return;
+  entityPopulateBusy=true;
+  try{
+    const localQids=new Set(nearby.map(r=>r.metadata?.qid));
+    let need=Math.min(3,target-nearby.length),attempts=0;
+    while(need>0&&attempts<12&&linkPool.length&&streamToken){
+      attempts++;
+      let choices=linkPool.filter(i=>!localQids.has(i.qid));
+      if(!choices.length)choices=linkPool;
+      const info=pick(choices);if(!info)break;
+      const ok=await spawnLinkEntity(info);
+      if(ok){localQids.add(info.qid);need--}
+      else break;
+    }
+    WLOG('entity-population',{reason,nearbyBefore:nearby.length,active:entities.length,pool:linkPool.length});
+  }finally{entityPopulateBusy=false}
+}
+async function spawnLinkEntity(info){
+  const s=nearestFreeSpawn('entity');if(!s){WLOG('entity-no-free-spawn',{qid:info.qid,slots:spawnSlots.length});return false}
+  const ownerRoot=entityRoot,ownerToken=streamToken;
+  const root=new BABYLON.TransformNode('link_'+info.qid,scene);root.position.set(s.x,groundY(s.x,s.z),s.z);root.rotation.y=s.yaw||rnd(Math.PI*2);root.parent=entityRoot;
+  root.metadata={...info,spawnChunk:s.tag||'core',spawnSlot:s};
+  const mat=matClean('entity_'+info.qid+'_'+Math.floor(rnd(1e9)),info.image,1);root.metadata.entityMat=mat;
+  const shape=await buildAssetEntity(root,info,mat);
+  if(ownerToken!==streamToken||entityRoot!==ownerRoot||!entityRoot||root.isDisposed?.()){s.used=false;try{root.dispose(false,false)}catch(e){}try{mat.dispose(true,true)}catch(e){}return false}
+  root.position.y=groundY(root.position.x,root.position.z);
+  animators.push({t:'object',root,phase:rnd(Math.PI*2),shape});
+  entities.push(root);WLOG('entity-asset-spawn',{qid:info.qid,shape,spawnChunk:root.metadata.spawnChunk,active:entities.length,pool:linkPool.length,assetPool:BABYLON_ENTITY_ASSETS.length});return true;
+}
+function addSearchOrb(){
+  const s=nearestFreeSpawn('utility')||emergencyOrbSpawn();
+  if(!s){WLOG('search-orb-no-safe-spawn',{});return}
+  const dx=s.x-camera.position.x,dz=s.z-camera.position.z;
+  if(dx*dx+dz*dz<34*34){WLOG('search-orb-rejected-near-player',{distance:Math.round(Math.hypot(dx,dz))});return}
+  const y=groundY(s.x,s.z);const orb=BABYLON.MeshBuilder.CreateSphere('searchOrb',{diameter:1.05,segments:12},scene);orb.position.set(s.x,y+1.05,s.z);orb.metadata={spawnSlot:s};const m=new BABYLON.StandardMaterial('searchOrbMat',scene);m.emissiveColor=new BABYLON.Color3(1,1,1);m.diffuseColor=new BABYLON.Color3(1,1,1);m.disableLighting=true;orb.material=m;orb.parent=entityRoot;searchOrb=orb;animators.push({t:'orb',root:orb,baseY:y+1.05,phase:rnd(Math.PI*2)});WLOG('search-orb-spawn',{distance:Math.round(Math.hypot(dx,dz)),tag:s.tag||'core'})}
+
+// ---------- movement / interactions ----------
+let movingTime=0;
+function updateMovement(){
+  if(!camera||transitioning||searchEl.style.display==='flex')return;const dt=Math.min(.04,engine.getDeltaTime()/1000);let f=(keys.f?1:0)-(keys.b?1:0),s=(keys.r?1:0)-(keys.l?1:0);if(joystick.active){f+=-joystick.y;s+=joystick.x}f=Math.max(-1,Math.min(1,f));s=Math.max(-1,Math.min(1,s));const moving=Math.abs(f)>.03||Math.abs(s)>.03;
+  if(moving){let fw=camera.getDirection(BABYLON.Axis.Z);fw.y=0;fw.normalize();let rt=camera.getDirection(BABYLON.Axis.X);rt.y=0;rt.normalize();const v=fw.scale(f).add(rt.scale(s));if(v.lengthSquared()){v.normalize().scaleInPlace((MOBILE?5.3:6.8)*dt);const ox=camera.position.x,oz=camera.position.z,nx=ox+v.x,nz=oz+v.z;if(!blocked(nx,oz))camera.position.x=nx;if(!blocked(camera.position.x,nz))camera.position.z=nz;if(camera.position.x===ox&&camera.position.z===oz){const sx=v.z*.6,sz=-v.x*.6;if(!blocked(ox+sx,oz+sz)){camera.position.x+=sx;camera.position.z+=sz}}}movingTime+=dt}else movingTime=0;
+  const bob=moving?Math.sin(movingTime*11)*.055:0;const target=groundY(camera.position.x,camera.position.z)+1.72+bob;camera.position.y+= (target-camera.position.y)*Math.min(1,dt*10);
+}
+function updateAnimators(){const t=now()*.001;for(const a of animators){if(a.t==='object'){a.root.position.y=groundY(a.root.position.x,a.root.position.z);a.root.rotation.y+=.003}else if(a.t==='orb'){a.root.position.y=a.baseY+Math.sin(t*2+a.phase)*.22}}
+  // occasional visual world stretch, subtle and non-deterministic
+  if(envRoot){const k=1+Math.sin(t*.17)*.003+Math.sin(t*.071)*.002;envRoot.scaling.x=k;envRoot.scaling.z=2-k}
+}
+function checkLinks(){if(transitioning||searchEl.style.display==='flex')return;const x=camera.position.x,z=camera.position.z;if(searchOrb&&now()>searchCooldown){const p=searchOrb.getAbsolutePosition(),dx=x-p.x,dz=z-p.z;if(dx*dx+dz*dz<3.5){openSearch();return}}
+  for(const root of entities){if(root.isDisposed())continue;const p=root.getAbsolutePosition(),dx=x-p.x,dz=z-p.z;if(dx*dx+dz*dz<5.4){enterEntity(root.metadata);return}}
+}
+async function enterEntity(info){if(transitioning)return;transitioning=true;const t0=now();WLOG('transition-start',{from:currentEntity?.qid,to:info.qid});showLoading(true);await sleep(80+rnd(140));buildDream(info);showLoading(false);transitioning=false;WLOG('transition-end',{to:info.qid,world:currentWorld,ms:Math.round(now()-t0)})}
+
+// ---------- input ----------
+function addInput(){
+  const joy=$('joystick'),knob=$('joystickKnob');
+  const setJoy=(e)=>{
+    const r=joy.getBoundingClientRect(),cx=r.left+r.width/2,cy=r.top+r.height/2;let dx=e.clientX-cx,dy=e.clientY-cy;const max=r.width*.34,len=Math.hypot(dx,dy);if(len>max){dx=dx/len*max;dy=dy/len*max}joystick.x=dx/max;joystick.y=dy/max;knob.style.transform=`translate(${dx}px,${dy}px)`;
+  };
+  const joyEnd=(e)=>{if(joystick.pid!==null&&e.pointerId!==joystick.pid)return;joystick.active=false;joystick.pid=null;joystick.x=joystick.y=0;knob.style.transform='translate(0px,0px)';};
+  joy.addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();resumeAudio();joystick.active=true;joystick.pid=e.pointerId;joy.setPointerCapture?.(e.pointerId);setJoy(e)});
+  joy.addEventListener('pointermove',e=>{if(!joystick.active||e.pointerId!==joystick.pid)return;e.preventDefault();e.stopPropagation();setJoy(e)});
+  joy.addEventListener('pointerup',e=>{e.preventDefault();e.stopPropagation();joyEnd(e)});
+  joy.addEventListener('pointercancel',joyEnd);
+  const map={KeyW:'f',ArrowUp:'f',KeyS:'b',ArrowDown:'b',KeyA:'l',ArrowLeft:'l',KeyD:'r',ArrowRight:'r'};window.addEventListener('keydown',e=>{if(e.code==='KeyM'){setSilent(!silentMode);return}if(e.code==='KeyL'){cycleLanguage();return}if(searchEl.style.display==='flex')return;const k=map[e.code];if(k){e.preventDefault();keys[k]=true;resumeAudio()}},{passive:false});window.addEventListener('keyup',e=>{const k=map[e.code];if(k){e.preventDefault();keys[k]=false}},{passive:false});window.addEventListener('blur',()=>{keys.f=keys.b=keys.l=keys.r=false;joystick.active=false;joystick.x=joystick.y=0;const k=$('joystickKnob');if(k)k.style.transform='translate(0px,0px)'});
+  let active=false,pid,lastX,lastY;canvas.addEventListener('pointerdown',e=>{resumeAudio();active=true;pid=e.pointerId;lastX=e.clientX;lastY=e.clientY;canvas.setPointerCapture?.(pid)});canvas.addEventListener('pointermove',e=>{if(!active||e.pointerId!==pid||searchEl.style.display==='flex')return;const dx=e.clientX-lastX,dy=e.clientY-lastY;lastX=e.clientX;lastY=e.clientY;camera.rotation.y+=dx*.0052;camera.rotation.x=Math.max(-1.15,Math.min(1.15,camera.rotation.x+dy*.0043))});const end=e=>{if(e.pointerId===pid)active=false};canvas.addEventListener('pointerup',end);canvas.addEventListener('pointercancel',end)
+}
+function openSearch(){if(searchEl.style.display==='flex')return;searchEl.style.display='flex';searchInput.value='';setTimeout(()=>searchInput.focus(),30)}
+function closeSearch(){searchEl.style.display='none';searchCooldown=now()+1400}
+$('searchClose').addEventListener('click',closeSearch);$('searchForm').addEventListener('submit',async e=>{e.preventDefault();const q=searchInput.value.trim();if(!q)return;closeSearch();showLoading(true);try{const base=await searchBaseEntity(q);await enterEntity(base)}catch(err){WLOG('search-error',{error:err.message})}finally{showLoading(false)}});
+
+$('muteBtn').addEventListener('click',()=>{resumeAudio();setSilent(!silentMode)});
+$('langBtn').addEventListener('click',()=>{resumeAudio();cycleLanguage()});
+
+// ---------- audio ----------
+function ensureAudio(){if(audioCtx)return;audioCtx=new (window.AudioContext||window.webkitAudioContext)();audioMaster=audioCtx.createGain();audioMaster.gain.value=.16;audioMaster.connect(audioCtx.destination)}
+async function resumeAudio(){try{ensureAudio();if(audioCtx.state!=='running')await audioCtx.resume();if(currentEntity&&!silentMode&&!voiceTimer)speakLoop(entityLabel())}catch(e){}}
+function stopMusic(){for(const n of audioNodes){try{n.stop?.()}catch(e){}try{n.disconnect?.()}catch(e){}}audioNodes=[]}
+function startAudioForWorld(){stopMusic();if(!audioCtx||audioCtx.state!=='running'){speakLoop(entityLabel());return}const master=audioCtx.createGain();master.gain.value=.18;master.connect(audioMaster);audioNodes.push(master);const count=1+Math.floor(rnd(4));for(let i=0;i<count;i++){const o=audioCtx.createOscillator(),g=audioCtx.createGain(),l=audioCtx.createOscillator(),lg=audioCtx.createGain();o.type=pick(['sine','triangle','sawtooth']);o.frequency.value=pick([43,55,66,82,110,147,196,220,294])*(.75+rnd(.9));g.gain.value=.008+rnd(.023);l.frequency.value=.03+rnd(.35);lg.gain.value=.004+rnd(.015);l.connect(lg);lg.connect(g.gain);o.connect(g);g.connect(master);o.start();l.start();audioNodes.push(o,g,l,lg)}speakLoop(entityLabel())}
+function speakLoop(name){
+  if(voiceTimer)clearTimeout(voiceTimer);
+  voiceTimer=null;
+  if(silentMode||!('speechSynthesis'in window))return;
+  speechSynthesis.cancel();
+  const voices=speechSynthesis.getVoices();
+  const chooseVoice=()=>{
+    if(!voices.length)return null;
+    const lang=currentTtsLang().slice(0,2).toLowerCase();
+    const pref=voices.filter(v=>v.lang?.toLowerCase().startsWith(lang));
+    return pick(pref.length?pref:voices);
+  };
+  const cleanDescription=()=>{
+    let d=entityDescription().replace(/\s+/g,' ').trim();
+    if(!d)return '';
+    if(d.length>170)d=d.slice(0,167).replace(/\s+\S*$/,'')+'…';
+    return d;
+  };
+  const go=()=>{
+    if(silentMode||!currentEntity||entityLabel()!==name)return;
+    const queue=[];
+    const repetitions=1+Math.floor(rnd(2));
+    for(let i=0;i<repetitions;i++){
+      queue.push({text:name,rate:.42+rnd(.85),pitch:.08+rnd(1.5),volume:.38+rnd(.48),voice:chooseVoice()});
+    }
+    const description=cleanDescription();
+    if(description && Math.random()<.72){
+      queue.push({text:description,rate:.55+rnd(.55),pitch:.12+rnd(.95),volume:.28+rnd(.42),voice:chooseVoice()});
+    }
+    queue.forEach((item,i)=>{
+      const u=new SpeechSynthesisUtterance(item.text);
+      u.lang=currentTtsLang();u.rate=item.rate;u.pitch=item.pitch;u.volume=item.volume;
+      if(item.voice)u.voice=item.voice;
+      if(i===queue.length-1){
+        u.onend=()=>voiceTimer=setTimeout(go,700+rnd(3300));
+        u.onerror=()=>voiceTimer=setTimeout(go,1600);
+      }
+      speechSynthesis.speak(u);
+    });
+    WLOG('tts-cycle',{label:name,description:!!description&&queue.length>repetitions,utterances:queue.length,lang:currentTtsLang()});
+  };
+  go();
+}
+
+// ---------- boot ----------
+async function boot(){const t0=now();WLOG('app-start',{name:APP_NAME,version:APP_VERSION,href:location.href});try{await ensureBabylon();init3d();if(!('speechSynthesis' in window))setSilent(true);const base=await randomBaseEntity();currentEntity=base;buildDream(base);showLoading(false);WLOG('boot-ready',{qid:base.qid,world:currentWorld,ms:Math.round(now()-t0)})}catch(err){WLOG('boot-error',{error:err.message});await sleep(1200);boot()}}
+boot();
+})();
+</script>
+</body>
+</html>
